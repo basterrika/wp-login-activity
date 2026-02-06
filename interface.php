@@ -326,7 +326,11 @@ class Login_Activity_Table_Screen {
     }
 
     public static function set_screen($status, $option, $value) {
-        return $value;
+        if ($option !== 'login_logs_per_page') {
+            return $status;
+        }
+
+        return absint($value);
     }
 
     public function add_logs_submenu_page(): void {
