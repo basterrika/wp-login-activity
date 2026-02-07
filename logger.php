@@ -123,13 +123,19 @@ class Activity_Logger {
     }
 
     private function bump_attempts_for_user(string $username): void {
+        $ip = $this->get_public_ip();
+
+        if ($ip === '') {
+            return;
+        }
+
         $uname = sanitize_user(mb_strtolower($username, 'UTF-8'));
 
         if ($uname === '') {
             return;
         }
 
-        $keys = $this->get_keys_for_user($uname);
+        $keys = $this->get_keys_for_user($uname, $ip);
         $this->bump_attempts($keys['attempts'], $keys['lock']);
     }
 
@@ -164,13 +170,19 @@ class Activity_Logger {
     }
 
     private function locked_until_for_user(string $username): int {
+        $ip = $this->get_public_ip();
+
+        if ($ip === '') {
+            return 0;
+        }
+
         $uname = sanitize_user(mb_strtolower($username, 'UTF-8'));
 
         if ($uname === '') {
             return 0;
         }
 
-        $keys = $this->get_keys_for_user($uname);
+        $keys = $this->get_keys_for_user($uname, $ip);
 
         return (int)get_transient($keys['lock']);
     }
@@ -189,13 +201,19 @@ class Activity_Logger {
     }
 
     private function clear_rate_state_for_user(string $username): void {
+        $ip = $this->get_public_ip();
+
+        if ($ip === '') {
+            return;
+        }
+
         $uname = sanitize_user(mb_strtolower($username, 'UTF-8'));
 
         if ($uname === '') {
             return;
         }
 
-        $keys = $this->get_keys_for_user($uname);
+        $keys = $this->get_keys_for_user($uname, $ip);
 
         delete_transient($keys['attempts']);
         delete_transient($keys['lock']);
@@ -210,8 +228,8 @@ class Activity_Logger {
         ];
     }
 
-    private function get_keys_for_user(string $uname): array {
-        $hash = md5($uname);
+    private function get_keys_for_user(string $uname, string $ip): array {
+        $hash = md5($uname . '|' . $ip);
 
         return [
             'attempts' => 'al_atm_u_' . $hash,
