@@ -5,6 +5,7 @@
  * Version: 1.0.0
  * Author: Mikel
  * Author URI: https://basterrika.com
+ * Update URI: https://github.com/basterrika/wp-login-activity
  * Text Domain: wp-login-activity
  * Requires PHP: 8.4
  * Tested up to: 6.9.1
