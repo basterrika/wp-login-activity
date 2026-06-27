@@ -13,12 +13,10 @@
 
 defined('ABSPATH') || exit;
 
-define('LOGIN_ACTIVITY_PLUGIN_DIR', plugin_dir_path(__FILE__));
-
-require_once LOGIN_ACTIVITY_PLUGIN_DIR . 'logger.php';
+require_once __DIR__ . '/logger.php';
 
 if (is_admin()) {
-    require_once LOGIN_ACTIVITY_PLUGIN_DIR . 'interface.php';
+    require_once __DIR__ . '/interface.php';
 }
 
 /*
