@@ -39,8 +39,7 @@ class Activity_Logger {
             KEY idx_log_date (log_date),
             KEY idx_status (status),
             KEY idx_status_date (status, log_date),
-            KEY idx_login (login),
-            FULLTEXT KEY ft_login (login)
+            KEY idx_login (login)
         ) ENGINE=InnoDB ROW_FORMAT=DYNAMIC $charset_collate;";
 
         require_once ABSPATH . 'wp-admin/includes/upgrade.php';
