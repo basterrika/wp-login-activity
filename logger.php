@@ -10,8 +10,6 @@ class Activity_Logger {
     private const int WINDOW_SECONDS = 30;
     private const int LOCKOUT_SECONDS = 300;
 
-    private ?string $cached_ip = null;
-
     public static function create_table(): void {
         global $wpdb;
 
@@ -255,15 +253,9 @@ class Activity_Logger {
     }
 
     private function get_public_ip(): string {
-        if ($this->cached_ip !== null) {
-            return $this->cached_ip;
-        }
-
         $ip = isset($_SERVER['REMOTE_ADDR']) ? trim((string)wp_unslash($_SERVER['REMOTE_ADDR'])) : '';
 
-        $this->cached_ip = filter_var($ip, FILTER_VALIDATE_IP) ? $ip : '';
-
-        return $this->cached_ip;
+        return filter_var($ip, FILTER_VALIDATE_IP) ? $ip : '';
     }
 
 }
