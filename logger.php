@@ -6,9 +6,9 @@ class Activity_Logger {
 
     private readonly string $table_name;
 
-    private int $max_attempts = 10;
-    private int $window_seconds = 30;
-    private int $lockout_seconds = 300;
+    private const int MAX_ATTEMPTS = 10;
+    private const int WINDOW_SECONDS = 30;
+    private const int LOCKOUT_SECONDS = 300;
 
     private ?string $cached_ip = null;
 
@@ -130,12 +130,12 @@ class Activity_Logger {
         $count = (int)get_transient($attempts_key);
         $count++;
 
-        set_transient($attempts_key, $count, $this->window_seconds);
+        set_transient($attempts_key, $count, self::WINDOW_SECONDS);
 
-        if ($count >= $this->max_attempts) {
-            $until = current_time('timestamp') + $this->lockout_seconds;
+        if ($count >= self::MAX_ATTEMPTS) {
+            $until = current_time('timestamp') + self::LOCKOUT_SECONDS;
 
-            set_transient($lock_key, $until, $this->lockout_seconds);
+            set_transient($lock_key, $until, self::LOCKOUT_SECONDS);
             delete_transient($attempts_key);
         }
     }
