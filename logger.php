@@ -4,8 +4,6 @@ defined('ABSPATH') || exit;
 
 class Activity_Logger {
 
-    private static ?self $instance = null;
-
     private readonly string $table_name;
 
     private int $max_attempts = 10;
@@ -13,14 +11,6 @@ class Activity_Logger {
     private int $lockout_seconds = 300;
 
     private ?string $cached_ip = null;
-
-    public static function get_instance(): self {
-        if (self::$instance === null) {
-            self::$instance = new self();
-        }
-
-        return self::$instance;
-    }
 
     public static function create_table(): void {
         global $wpdb;
@@ -44,7 +34,7 @@ class Activity_Logger {
         dbDelta($sql);
     }
 
-    private function __construct() {
+    public function __construct() {
         global $wpdb;
 
         $this->table_name = $wpdb->prefix . 'login_activity';
@@ -282,4 +272,4 @@ class Activity_Logger {
 
 }
 
-Activity_Logger::get_instance();
+new Activity_Logger();
