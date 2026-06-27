@@ -210,7 +210,7 @@ class Login_Activity_Table extends WP_List_Table {
                 return date_i18n($this->date_format . ', ' . $this->time_format, strtotime($item['log_date']));
 
             default:
-                return esc_html(print_r($item, true));
+                return '';
         }
     }
 
