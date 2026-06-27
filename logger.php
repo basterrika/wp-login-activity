@@ -127,19 +127,15 @@ class Activity_Logger {
     }
 
     private function bump_attempts(string $attempts_key, string $lock_key): void {
-        $max_attempts = $this->max_attempts;
-        $window_seconds = $this->window_seconds;
-        $lockout_seconds = $this->lockout_seconds;
-
         $count = (int)get_transient($attempts_key);
         $count++;
 
-        set_transient($attempts_key, $count, $window_seconds);
+        set_transient($attempts_key, $count, $this->window_seconds);
 
-        if ($count >= $max_attempts) {
-            $until = current_time('timestamp') + $lockout_seconds;
+        if ($count >= $this->max_attempts) {
+            $until = current_time('timestamp') + $this->lockout_seconds;
 
-            set_transient($lock_key, $until, $lockout_seconds);
+            set_transient($lock_key, $until, $this->lockout_seconds);
             delete_transient($attempts_key);
         }
     }
