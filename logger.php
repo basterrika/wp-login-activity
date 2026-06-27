@@ -37,7 +37,6 @@ class Activity_Logger {
             log_date DATETIME NOT NULL,
             PRIMARY KEY (id),
             KEY idx_log_date (log_date),
-            KEY idx_status (status),
             KEY idx_status_date (status, log_date)
         ) ENGINE=InnoDB ROW_FORMAT=DYNAMIC $charset_collate;";
 
