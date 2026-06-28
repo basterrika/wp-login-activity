@@ -11,6 +11,7 @@ class Login_Activity_Table extends WP_List_Table {
     private readonly string $table_name;
     private string $date_format;
     private string $time_format;
+    private ?array $counts = null;
 
     public function __construct() {
         global $wpdb;
@@ -64,16 +65,7 @@ class Login_Activity_Table extends WP_List_Table {
     }
 
     private function build_where_clause(): string {
-        global $wpdb;
-
-        $where = [];
-
-        if (isset($_GET['s']) && $_GET['s'] !== '') {
-            $s_raw = wp_unslash($_GET['s']);
-            $s_clean = mb_substr(trim(sanitize_text_field($s_raw)), 0, 100);
-            $like = '%' . $wpdb->esc_like($s_clean) . '%';
-            $where[] = $wpdb->prepare('login LIKE %s', $like);
-        }
+        $where = $this->search_date_where();
 
         if (isset($_GET['status']) && $_GET['status'] !== '') {
             $status_raw = sanitize_text_field(wp_unslash($_GET['status']));
@@ -84,6 +76,21 @@ class Login_Activity_Table extends WP_List_Table {
             elseif ($status_raw === 'error') {
                 $where[] = 'status = 0';
             }
+        }
+
+        return $where ? ' WHERE ' . implode(' AND ', $where) : '';
+    }
+
+    private function search_date_where(): array {
+        global $wpdb;
+
+        $where = [];
+
+        if (isset($_GET['s']) && $_GET['s'] !== '') {
+            $s_raw = wp_unslash($_GET['s']);
+            $s_clean = mb_substr(trim(sanitize_text_field($s_raw)), 0, 100);
+            $like = '%' . $wpdb->esc_like($s_clean) . '%';
+            $where[] = $wpdb->prepare('login LIKE %s', $like);
         }
 
         if (isset($_GET['date']) && $_GET['date'] !== '') {
@@ -99,16 +106,18 @@ class Login_Activity_Table extends WP_List_Table {
             }
         }
 
-        return $where ? ' WHERE ' . implode(' AND ', $where) : '';
+        return $where;
     }
 
     protected function record_count(): int {
-        global $wpdb;
+        $counts = $this->get_counts();
+        $status = isset($_GET['status']) ? sanitize_text_field(wp_unslash($_GET['status'])) : '';
 
-        $sql = "SELECT COUNT(*) FROM $this->table_name";
-        $sql .= $this->build_where_clause();
-
-        return (int)$wpdb->get_var($sql);
+        return (int)match ($status) {
+            'success' => $counts['successes'] ?? 0,
+            'error' => $counts['errors'] ?? 0,
+            default => $counts['total'] ?? 0,
+        };
     }
 
     public function no_items(): void {
@@ -116,24 +125,13 @@ class Login_Activity_Table extends WP_List_Table {
     }
 
     private function get_counts(): array {
+        if ($this->counts !== null) {
+            return $this->counts;
+        }
+
         global $wpdb;
 
-        $where = [];
-
-        if (!empty($_GET['s'])) {
-            $s_raw = wp_unslash($_GET['s']);
-            $s = '%' . $wpdb->esc_like(sanitize_text_field($s_raw)) . '%';
-            $where[] = $wpdb->prepare('login LIKE %s', $s);
-        }
-
-        if (!empty($_GET['date'])) {
-            [$year, $month] = array_map('intval', explode('-', sanitize_text_field($_GET['date'])));
-
-            if ($year > 0 && $month > 0 && $month <= 12) {
-                $where[] = $wpdb->prepare('YEAR(log_date) = %d AND MONTH(log_date) = %d', $year, $month);
-            }
-        }
-
+        $where = $this->search_date_where();
         $where_clause = $where ? ' WHERE ' . implode(' AND ', $where) : '';
 
         $sql = "
@@ -145,7 +143,7 @@ class Login_Activity_Table extends WP_List_Table {
             {$where_clause}
         ";
 
-        return (array)$wpdb->get_row($sql, ARRAY_A);
+        return $this->counts = (array)$wpdb->get_row($sql, ARRAY_A);
     }
 
     protected function get_views(): array {
