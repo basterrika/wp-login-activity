@@ -48,7 +48,7 @@ class Login_Activity_Table extends WP_List_Table {
             SELECT
                 id,
                 login,
-                INET6_NTOA(ip) AS ip,
+                ip,
                 status,
                 log_date
             FROM {$this->table_name}

@@ -9,7 +9,7 @@ Just a WordPress plugin that logs authentication attempts and provides a basic a
 - Stores:
   - sanitized username (`login`)
   - request URL used for login (`login_url`)
-  - IP address (IPv4/IPv6, stored as binary)
+  - IP address (IPv4/IPv6, stored as text so SQL dumps stay portable)
   - status (`success` or `error`)
   - timestamp (`log_date`)
 - Adds a lockout layer before authentication:

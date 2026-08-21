@@ -16,20 +16,17 @@ class Activity_Logger {
         $table = $wpdb->prefix . 'login_activity';
         $charset_collate = $wpdb->get_charset_collate();
 
-        $sql = "CREATE TABLE IF NOT EXISTS $table (
+        $wpdb->query("CREATE TABLE IF NOT EXISTS $table (
             id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
             login VARCHAR(191) NOT NULL,
-            login_url varchar(255) NOT NULL,
-            ip VARBINARY(16) NOT NULL,
+            login_url VARCHAR(255) NOT NULL,
+            ip VARCHAR(45) NOT NULL DEFAULT '',
             status TINYINT UNSIGNED NOT NULL,
             log_date DATETIME NOT NULL,
             PRIMARY KEY (id),
             KEY idx_log_date (log_date),
             KEY idx_status_date (status, log_date)
-        ) ENGINE=InnoDB ROW_FORMAT=DYNAMIC $charset_collate;";
-
-        require_once ABSPATH . 'wp-admin/includes/upgrade.php';
-        dbDelta($sql);
+        ) ENGINE=InnoDB ROW_FORMAT=DYNAMIC $charset_collate");
     }
 
     public function __construct() {
@@ -224,18 +221,10 @@ class Activity_Logger {
         $login = sanitize_user(mb_strtolower((string)$username, 'UTF-8'));
         $status_int = $status === 'success' ? 1 : 0;
 
-        // Pack to binary (16B). If invalid/missing, use 16 x 0x00 (still valid VARBINARY(16)).
-        $ip_str = $this->get_public_ip();
-        $ip_bin = $ip_str !== '' ? @inet_pton($ip_str) : false;
-
-        if ($ip_bin === false) {
-            $ip_bin = str_repeat("\x00", 16);
-        }
-
         $data = [
             'login' => $login,
             'login_url' => esc_url_raw($this->get_login_url()),
-            'ip' => $ip_bin,
+            'ip' => $this->get_public_ip(),
             'status' => $status_int,
             'log_date' => current_time('mysql'),
         ];
