@@ -8,17 +8,24 @@ if (!class_exists('WP_List_Table')) {
 
 class Login_Activity_Table extends WP_List_Table {
 
-    private readonly string $table_name;
+    private readonly string $activity_table;
     private string $date_format;
     private string $time_format;
     private ?array $counts = null;
+    private array $filters = [];
 
     public function __construct() {
         global $wpdb;
 
-        $this->table_name = $wpdb->prefix . 'login_activity';
+        $this->activity_table = $wpdb->prefix . 'login_activity';
         $this->date_format = (string)get_option('date_format', 'Y-m-d');
         $this->time_format = (string)get_option('time_format', 'H:i');
+
+        foreach (['s', 'date', 'status', 'order'] as $key) {
+            $value = $_GET[$key] ?? '';
+            $this->filters[$key] = is_string($value) ? sanitize_text_field(wp_unslash($value)) : '';
+        }
+        $this->filters['s'] = mb_substr($this->filters['s'], 0, 100);
 
         parent::__construct([
             'singular' => esc_html__('Login Activity', 'wp-login-activity'),
@@ -30,19 +37,11 @@ class Login_Activity_Table extends WP_List_Table {
     /**
      * Retrieve login logs data from the database.
      */
-    private function get_login_activity(int $per_page = 100, int $page_number = 1): array {
+    private function get_login_activity(int $per_page, int $page_number): array {
         global $wpdb;
 
         $where_clause = $this->build_where_clause();
-        $allowed_orderby = ['login', 'ip', 'status', 'log_date', 'id'];
-        $orderby = !empty($_GET['orderby']) ? sanitize_key($_GET['orderby']) : 'log_date';
-
-        if (!in_array($orderby, $allowed_orderby, true)) {
-            $orderby = 'log_date';
-        }
-
-        $order = !empty($_GET['order']) ? strtoupper(wp_unslash($_GET['order'])) : 'DESC';
-        $order = in_array($order, ['ASC', 'DESC'], true) ? $order : 'DESC';
+        $order = strtoupper($this->filters['order']) === 'ASC' ? 'ASC' : 'DESC';
 
         $sql = "
             SELECT
@@ -51,15 +50,12 @@ class Login_Activity_Table extends WP_List_Table {
                 ip,
                 status,
                 log_date
-            FROM {$this->table_name}
+            FROM {$this->activity_table}
             {$where_clause}
-            ORDER BY $orderby {$order}
+            ORDER BY log_date $order, id {$order}
         ";
 
-        if ($per_page !== -1) {
-            $offset = ($page_number - 1) * $per_page;
-            $sql .= $wpdb->prepare(" LIMIT %d OFFSET %d", $per_page, $offset);
-        }
+        $sql .= $wpdb->prepare(" LIMIT %d OFFSET %d", $per_page, ($page_number - 1) * $per_page);
 
         return (array)$wpdb->get_results($sql, ARRAY_A);
     }
@@ -67,15 +63,11 @@ class Login_Activity_Table extends WP_List_Table {
     private function build_where_clause(): string {
         $where = $this->search_date_where();
 
-        if (isset($_GET['status']) && $_GET['status'] !== '') {
-            $status_raw = sanitize_text_field(wp_unslash($_GET['status']));
-
-            if ($status_raw === 'success') {
-                $where[] = 'status = 1';
-            }
-            elseif ($status_raw === 'error') {
-                $where[] = 'status = 0';
-            }
+        if ($this->filters['status'] === 'success') {
+            $where[] = 'status = 1';
+        }
+        elseif ($this->filters['status'] === 'error') {
+            $where[] = 'status = 0';
         }
 
         return $where ? ' WHERE ' . implode(' AND ', $where) : '';
@@ -86,23 +78,18 @@ class Login_Activity_Table extends WP_List_Table {
 
         $where = [];
 
-        if (isset($_GET['s']) && $_GET['s'] !== '') {
-            $s_raw = wp_unslash($_GET['s']);
-            $s_clean = mb_substr(trim(sanitize_text_field($s_raw)), 0, 100);
-            $like = '%' . $wpdb->esc_like($s_clean) . '%';
+        if ($this->filters['s'] !== '') {
+            $like = '%' . $wpdb->esc_like($this->filters['s']) . '%';
             $where[] = $wpdb->prepare('login LIKE %s', $like);
         }
 
-        if (isset($_GET['date']) && $_GET['date'] !== '') {
-            $date_raw = wp_unslash($_GET['date']);
-            $date_safe = sanitize_text_field($date_raw);
+        if (str_contains($this->filters['date'], '-')) {
+            [$year, $month] = array_map('intval', explode('-', $this->filters['date'], 2));
 
-            if (str_contains($date_safe, '-')) {
-                [$year, $month] = array_map('intval', explode('-', $date_safe, 2));
-
-                if ($year > 0 && $month > 0 && $month <= 12) {
-                    $where[] = $wpdb->prepare('YEAR(log_date) = %d AND MONTH(log_date) = %d', $year, $month);
-                }
+            if ($year > 0 && $year < 9999 && $month > 0 && $month <= 12) {
+                $start = sprintf('%04d-%02d-01 00:00:00', $year, $month);
+                $end = $month === 12 ? sprintf('%04d-01-01 00:00:00', $year + 1) : sprintf('%04d-%02d-01 00:00:00', $year, $month + 1);
+                $where[] = $wpdb->prepare('log_date >= %s AND log_date < %s', get_gmt_from_date($start), get_gmt_from_date($end));
             }
         }
 
@@ -111,7 +98,7 @@ class Login_Activity_Table extends WP_List_Table {
 
     protected function record_count(): int {
         $counts = $this->get_counts();
-        $status = isset($_GET['status']) ? sanitize_text_field(wp_unslash($_GET['status'])) : '';
+        $status = $this->filters['status'];
 
         return (int)match ($status) {
             'success' => $counts['successes'] ?? 0,
@@ -139,7 +126,7 @@ class Login_Activity_Table extends WP_List_Table {
                 COUNT(*) AS total,
                 SUM(CASE WHEN status = 1 THEN 1 ELSE 0 END) AS successes,
                 SUM(CASE WHEN status = 0 THEN 1 ELSE 0 END) AS errors
-            FROM {$this->table_name}
+            FROM {$this->activity_table}
             {$where_clause}
         ";
 
@@ -149,13 +136,14 @@ class Login_Activity_Table extends WP_List_Table {
     protected function get_views(): array {
         $counts = $this->get_counts();
         $all_url = remove_query_arg(['s', 'paged', 'status', 'date']);
-        $search_q = !empty($_GET['s']) ? '&s=' . urlencode($_GET['s']) : '';
-        $date_q = !empty($_GET['date']) ? '&date=' . urlencode($_GET['date']) : '';
-        $base_args = $all_url . $search_q . $date_q;
+        $base_args = add_query_arg([
+            's' => $this->filters['s'] !== '' ? rawurlencode($this->filters['s']) : false,
+            'date' => $this->filters['date'] !== '' ? rawurlencode($this->filters['date']) : false,
+        ], $all_url);
 
-        $all_class = !isset($_GET['status']) ? ' class="current"' : '';
-        $success_class = (isset($_GET['status']) && $_GET['status'] === 'success') ? ' class="current"' : '';
-        $error_class = (isset($_GET['status']) && $_GET['status'] === 'error') ? ' class="current"' : '';
+        $all_class = !in_array($this->filters['status'], ['success', 'error'], true) ? ' class="current"' : '';
+        $success_class = $this->filters['status'] === 'success' ? ' class="current"' : '';
+        $error_class = $this->filters['status'] === 'error' ? ' class="current"' : '';
 
         return [
             'all' => sprintf(
@@ -205,7 +193,7 @@ class Login_Activity_Table extends WP_List_Table {
                     : '<span style="color:#f00">' . esc_html__('Error', 'wp-login-activity') . '</span>';
 
             case 'log_date':
-                return date_i18n($this->date_format . ', ' . $this->time_format, strtotime($item['log_date']));
+                return esc_html(wp_date($this->date_format . ', ' . $this->time_format, strtotime($item['log_date'] . ' UTC')));
 
             default:
                 return '';
@@ -228,7 +216,7 @@ class Login_Activity_Table extends WP_List_Table {
     public function prepare_items(): void {
         $this->_column_headers = $this->get_column_info();
 
-        $per_page = $this->get_items_per_page('login_logs_per_page', 100);
+        $per_page = min($this->get_items_per_page('login_logs_per_page', 100), 999);
         $current_page = $this->get_pagenum();
         $total_items = $this->record_count();
 
@@ -243,35 +231,39 @@ class Login_Activity_Table extends WP_List_Table {
     private function display_date_dropdown(): void {
         global $wpdb, $wp_locale;
 
-        $dates = $wpdb->get_results("
-            SELECT DISTINCT YEAR(log_date) AS year, MONTH(log_date) AS month
-            FROM {$this->table_name}
-            ORDER BY log_date DESC
-        ");
+        $dates = [];
+        $latest = $wpdb->get_var("SELECT log_date FROM $this->activity_table ORDER BY log_date DESC LIMIT 1");
 
-        $selected_date = $_GET['date'] ?? '';
+        // Seek once per populated local month using the date index, without scanning every log.
+        while ($latest !== null) {
+            $month = get_date_from_gmt($latest, 'Y-m');
+            $dates[] = $month;
+            $start = get_gmt_from_date($month . '-01 00:00:00');
+            $latest = $wpdb->get_var($wpdb->prepare(
+                "SELECT log_date FROM $this->activity_table WHERE log_date < %s ORDER BY log_date DESC LIMIT 1",
+                $start
+            ));
+        }
+
+        $selected_date = $this->filters['date'];
 
         ?>
 
         <label for="filter-by-date" class="screen-reader-text"><?php esc_html_e('Filter by date', 'wp-login-activity'); ?></label>
         <select name="date" id="filter-by-date">
-            <option<?php selected($selected_date, 0) ?> value="0"><?php esc_html_e('All dates', 'wp-login-activity') ?></option>
+            <option value=""><?php esc_html_e('All dates', 'wp-login-activity') ?></option>
 
             <?php
 
-            foreach ($dates as $arc_row) {
-                if ((int)$arc_row->year === 0) {
-                    continue;
-                }
-
-                $month = zeroise((int)$arc_row->month, 2);
-                $year = (int)$arc_row->year;
+            foreach ($dates as $date) {
+                [$year, $month] = explode('-', $date);
 
                 printf(
                     "<option %s value='%s'>%s</option>\n",
-                    selected($selected_date, $year . '-' . $month, false),
-                    esc_attr($year . '-' . $month),
+                    selected($selected_date, $date, false),
+                    esc_attr($date),
                     sprintf(
+                        /* translators: 1: month name, 2: four-digit year */
                         esc_html__('%1$s %2$s', 'wp-login-activity'),
                         esc_html($wp_locale->get_month($month)),
                         esc_html($year)
@@ -350,24 +342,16 @@ class Login_Activity_Table_Screen {
         <div class="wrap">
             <h1 class="wp-heading-inline"><?php esc_html_e('Login logs', 'wp-login-activity') ?></h1>
             <hr class="wp-header-end">
-            <div id="poststuff">
-                <div id="post-body" class="metabox-holder columns-1">
-                    <div id="post-body-content">
-                        <div class="meta-box-sortables ui-sortable">
-                            <?php $this->logs_obj->views() ?>
-                            <form method="get">
-                                <input type="hidden" name="page" value="<?php echo isset($_REQUEST['page']) ? esc_attr($_REQUEST['page']) : ''; ?>"/>
-                                <?php
-                                $this->logs_obj->prepare_items();
-                                $this->logs_obj->search_box(esc_html__('Search login', 'wp-login-activity'), 'login-log');
-                                $this->logs_obj->display();
-                                ?>
-                            </form>
-                        </div>
-                    </div>
-                </div>
-                <br class="clear">
-            </div>
+            <?php $this->logs_obj->views() ?>
+            <form method="get">
+                <input type="hidden" name="page" value="login-activity"/>
+                <input type="hidden" name="status" value="<?php echo esc_attr(sanitize_key(wp_unslash($_GET['status'] ?? ''))) ?>"/>
+                <?php
+                $this->logs_obj->prepare_items();
+                $this->logs_obj->search_box(esc_html__('Search login', 'wp-login-activity'), 'login-log');
+                $this->logs_obj->display();
+                ?>
+            </form>
         </div>
 
         <?php

@@ -4,215 +4,165 @@ defined('ABSPATH') || exit;
 
 class Activity_Logger {
 
-    private readonly string $table_name;
+    private readonly string $activity_table;
+    private readonly string $attempts_table;
 
-    private const int MAX_ATTEMPTS = 10;
-    private const int WINDOW_SECONDS = 30;
-    private const int LOCKOUT_SECONDS = 300;
+    private const int IP_LOGIN_MAX_ATTEMPTS = 10;
+    private const int IP_LOGIN_WINDOW_SECONDS = 900; // 15 minutes
+    private const int IP_RESET_MAX_REQUESTS = 5;
+    private const int IP_RESET_WINDOW_SECONDS = 3600; // 1 hour
+    private const int ACCOUNT_LOGIN_MAX_ATTEMPTS = 20;
+    private const int ACCOUNT_LOGIN_WINDOW_SECONDS = 3600; // 1 hour
 
-    public static function create_table(): void {
-        global $wpdb;
-
-        $table = $wpdb->prefix . 'login_activity';
-        $charset_collate = $wpdb->get_charset_collate();
-
-        $wpdb->query("CREATE TABLE IF NOT EXISTS $table (
-            id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
-            login VARCHAR(191) NOT NULL,
-            login_url VARCHAR(255) NOT NULL,
-            ip VARCHAR(45) NOT NULL DEFAULT '',
-            status TINYINT UNSIGNED NOT NULL,
-            log_date DATETIME NOT NULL,
-            PRIMARY KEY (id),
-            KEY idx_log_date (log_date),
-            KEY idx_status_date (status, log_date)
-        ) ENGINE=InnoDB ROW_FORMAT=DYNAMIC $charset_collate");
-    }
+    private array $reserved_keys = [];
 
     public function __construct() {
         global $wpdb;
 
-        $this->table_name = $wpdb->prefix . 'login_activity';
+        $this->activity_table = $wpdb->prefix . 'login_activity';
+        $this->attempts_table = $wpdb->prefix . 'login_attempts';
 
-        add_filter('authenticate', [$this, 'maybe_block_auth'], 5, 3);
+        add_filter('authenticate', [$this, 'reserve_attempt'], 5, 3);
+        add_filter('authenticate', [$this, 'refund_attempt'], PHP_INT_MAX);
+        add_action('lostpassword_post', [$this, 'throttle_password_reset']);
         add_action('wp_login', [$this, 'log_successful_login']);
         add_action('wp_login_failed', [$this, 'log_failed_login']);
     }
 
     public function log_successful_login($user_login): void {
         $this->create_login_log($user_login, 'success');
-        $this->clear_rate_state_for_ip();
-        $this->clear_rate_state_for_user($user_login);
     }
 
     public function log_failed_login($username): void {
         $this->create_login_log($username, 'error');
-        $this->bump_attempts_for_ip();
-        $this->bump_attempts_for_user($username);
     }
 
-    public function maybe_block_auth($user, string $username, string $password) {
-        $now = current_time('timestamp');
-        $ip_until = $this->locked_until_for_ip();
-
-        if ($ip_until && $ip_until > $now) {
-            $this->wp_die_lock(
-                sprintf(
-                    /* translators: %s: human-readable remaining time */
-                    esc_html__('Too many failed login attempts. Please try again in %s.', 'wp-login-activity'),
-                    esc_html(human_time_diff($now, $ip_until))
-                )
-            );
+    public function reserve_attempt($user, $username, $password) {
+        if ((string)$username === '' || (string)$password === '' || $user instanceof WP_User) {
+            return $user;
         }
 
-        if ($username !== '') {
-            $user_until = $this->locked_until_for_user($username);
+        $ip_key = $this->bucket_key('auth');
 
-            if ($user_until && $user_until > $now) {
-                $this->wp_die_lock(
-                    sprintf(
-                        /* translators: %s: human-readable remaining time */
-                        esc_html__('This account is temporarily locked due to too many failed attempts. Try again in %s.', 'wp-login-activity'),
-                        esc_html(human_time_diff($now, $user_until))
-                    )
-                );
-            }
+        if ($ip_key !== null && $this->hit($ip_key, self::IP_LOGIN_MAX_ATTEMPTS, self::IP_LOGIN_WINDOW_SECONDS) > self::IP_LOGIN_MAX_ATTEMPTS) {
+            $this->block(self::IP_LOGIN_WINDOW_SECONDS);
         }
+
+        // Per-account limit across all IPs. Counts unknown usernames too. Locks out the real user while under attack.
+        $account_key = $this->account_key((string)$username);
+
+        if ($this->hit($account_key, self::ACCOUNT_LOGIN_MAX_ATTEMPTS, self::ACCOUNT_LOGIN_WINDOW_SECONDS) > self::ACCOUNT_LOGIN_MAX_ATTEMPTS) {
+            $this->block(self::ACCOUNT_LOGIN_WINDOW_SECONDS);
+        }
+
+        $this->reserved_keys = array_filter([$ip_key, $account_key]);
 
         return $user;
     }
 
-    private function wp_die_lock(string $message): void {
+    public function refund_attempt($user) {
+        if ($this->reserved_keys && $user instanceof WP_User) {
+            global $wpdb;
+
+            $placeholders = implode(',', array_fill(0, count($this->reserved_keys), '%s'));
+
+            $wpdb->query($wpdb->prepare("UPDATE $this->attempts_table SET attempts = attempts - 1 WHERE bucket_key IN ($placeholders) AND attempts > 0", ...$this->reserved_keys));
+        }
+
+        $this->reserved_keys = [];
+
+        return $user;
+    }
+
+    private function block(int $seconds): never {
+        header('Retry-After: ' . $seconds);
+
         wp_die(
-            esc_html($message),
+            esc_html(sprintf(
+                /* translators: %s: human-readable remaining time */
+                __('Too many failed login attempts. Please try again in %s.', 'wp-login-activity'),
+                human_time_diff(0, $seconds)
+            )),
             esc_html__('Login blocked', 'wp-login-activity'),
             [
-                'response' => 403,
+                'response' => 429,
                 'back_link' => false,
             ]
         );
     }
 
-    private function bump_attempts_for_ip(): void {
-        $ip = $this->get_public_ip();
-
-        if ($ip === '') {
+    public function throttle_password_reset(WP_Error $errors): void {
+        if (current_user_can('edit_users')) {
             return;
         }
 
-        $keys = $this->get_keys_for_ip($ip);
-        $this->bump_attempts($keys['attempts'], $keys['lock']);
-    }
+        $key = $this->bucket_key('reset');
 
-    private function bump_attempts_for_user(string $username): void {
-        $ip = $this->get_public_ip();
-
-        if ($ip === '') {
-            return;
-        }
-
-        $uname = sanitize_user(mb_strtolower($username, 'UTF-8'));
-
-        if ($uname === '') {
-            return;
-        }
-
-        $keys = $this->get_keys_for_user($uname, $ip);
-        $this->bump_attempts($keys['attempts'], $keys['lock']);
-    }
-
-    private function bump_attempts(string $attempts_key, string $lock_key): void {
-        $count = (int)get_transient($attempts_key);
-        $count++;
-
-        set_transient($attempts_key, $count, self::WINDOW_SECONDS);
-
-        if ($count >= self::MAX_ATTEMPTS) {
-            $until = current_time('timestamp') + self::LOCKOUT_SECONDS;
-
-            set_transient($lock_key, $until, self::LOCKOUT_SECONDS);
-            delete_transient($attempts_key);
+        if ($key !== null && $this->hit($key, self::IP_RESET_MAX_REQUESTS, self::IP_RESET_WINDOW_SECONDS) > self::IP_RESET_MAX_REQUESTS) {
+            $errors->add('too_many_requests', esc_html__('Too many password reset requests. Please try again later.', 'wp-login-activity'));
         }
     }
 
-    private function locked_until_for_ip(): int {
-        $ip = $this->get_public_ip();
+    private function hit(string $key, int $max, int $window): int {
+        global $wpdb;
 
-        if ($ip === '') {
+        $table = $this->attempts_table;
+        $now = time();
+
+        $result = $wpdb->query($wpdb->prepare(
+            "INSERT INTO $table (bucket_key, attempts, expires)
+             VALUES (%s, 1, %d)
+             ON DUPLICATE KEY UPDATE
+                 attempts = LAST_INSERT_ID(IF(expires <= %d, 1, LEAST(attempts + 1, %d))),
+                 expires = IF(attempts = 1 OR attempts > %d, %d, expires)",
+            $key,
+            $now + $window,
+            $now,
+            $max + 1,
+            $max,
+            $now + $window
+        ));
+
+        // Fail open: a DB error must not lock everyone out. wpdb already writes the error to the PHP error log.
+        if ($result === false) {
             return 0;
         }
 
-        $keys = $this->get_keys_for_ip($ip);
+        // A fresh insert leaves insert_id at 0 (no AUTO_INCREMENT). Updates return the count via LAST_INSERT_ID().
+        $count = $wpdb->insert_id ?: 1;
 
-        return (int)get_transient($keys['lock']);
+        if (mt_rand(1, 100) === 1) {
+            $wpdb->query($wpdb->prepare("DELETE FROM $table WHERE expires < %d LIMIT 1000", $now));
+        }
+
+        return $count;
     }
 
-    private function locked_until_for_user(string $username): int {
+    private function bucket_key(string $scope): ?string {
         $ip = $this->get_public_ip();
 
         if ($ip === '') {
-            return 0;
+            return null;
         }
 
-        $uname = sanitize_user(mb_strtolower($username, 'UTF-8'));
+        $packed = inet_pton($ip);
 
-        if ($uname === '') {
-            return 0;
+        if (strlen($packed) === 16 && strncmp($packed, "\0\0\0\0\0\0\0\0\0\0\xff\xff", 12) !== 0) {
+            $ip = inet_ntop(substr($packed, 0, 8) . str_repeat("\0", 8));
         }
 
-        $keys = $this->get_keys_for_user($uname, $ip);
-
-        return (int)get_transient($keys['lock']);
+        return md5($scope . '|' . $ip);
     }
 
-    private function clear_rate_state_for_ip(): void {
-        $ip = $this->get_public_ip();
+    private function account_key(string $username): string {
+        $name = mb_strtolower(trim($username), 'UTF-8');
 
-        if ($ip === '') {
-            return;
+        // Email and username of the same account share one bucket.
+        if (is_email($name) && ($account = get_user_by('email', $name))) {
+            $name = mb_strtolower($account->user_login, 'UTF-8');
         }
 
-        $keys = $this->get_keys_for_ip($ip);
-
-        delete_transient($keys['attempts']);
-        delete_transient($keys['lock']);
-    }
-
-    private function clear_rate_state_for_user(string $username): void {
-        $ip = $this->get_public_ip();
-
-        if ($ip === '') {
-            return;
-        }
-
-        $uname = sanitize_user(mb_strtolower($username, 'UTF-8'));
-
-        if ($uname === '') {
-            return;
-        }
-
-        $keys = $this->get_keys_for_user($uname, $ip);
-
-        delete_transient($keys['attempts']);
-        delete_transient($keys['lock']);
-    }
-
-    private function get_keys_for_ip(string $ip): array {
-        $hash = md5($ip);
-
-        return [
-            'attempts' => 'al_atm_ip_' . $hash,
-            'lock' => 'al_lck_ip_' . $hash,
-        ];
-    }
-
-    private function get_keys_for_user(string $uname, string $ip): array {
-        $hash = md5($uname . '|' . $ip);
-
-        return [
-            'attempts' => 'al_atm_u_' . $hash,
-            'lock' => 'al_lck_u_' . $hash,
-        ];
+        return md5('account|' . $name);
     }
 
     private function create_login_log($username, $status): void {
@@ -222,23 +172,17 @@ class Activity_Logger {
         $status_int = $status === 'success' ? 1 : 0;
 
         $data = [
-            'login' => $login,
-            'login_url' => esc_url_raw($this->get_login_url()),
+            'login' => mb_substr($login, 0, 191, 'UTF-8'),
             'ip' => $this->get_public_ip(),
             'status' => $status_int,
-            'log_date' => current_time('mysql'),
+            'log_date' => current_time('mysql', true),
         ];
 
-        $format = ['%s', '%s', '%s', '%d', '%s'];
+        $format = ['%s', '%s', '%d', '%s'];
 
-        // phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery
-        $wpdb->insert($this->table_name, $data, $format);
-    }
-
-    private function get_login_url(): string {
-        $uri = isset($_SERVER['REQUEST_URI']) ? sanitize_text_field(wp_unslash($_SERVER['REQUEST_URI'])) : '';
-
-        return home_url($uri);
+        if ($wpdb->insert($this->activity_table, $data, $format) === false) {
+            error_log('WP Login Activity: failed to insert login activity.');
+        }
     }
 
     private function get_public_ip(): string {
