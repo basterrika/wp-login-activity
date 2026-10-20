@@ -217,7 +217,6 @@ class Login_Activity_Table extends WP_List_Table {
         $this->_column_headers = $this->get_column_info();
 
         $per_page = min($this->get_items_per_page('login_logs_per_page', 100), 999);
-        $current_page = $this->get_pagenum();
         $total_items = $this->record_count();
 
         $this->set_pagination_args([
@@ -225,7 +224,7 @@ class Login_Activity_Table extends WP_List_Table {
             'per_page' => $per_page
         ]);
 
-        $this->items = $this->get_login_activity($per_page, $current_page);
+        $this->items = $total_items ? $this->get_login_activity($per_page, $this->get_pagenum()) : [];
     }
 
     private function display_date_dropdown(): void {
