@@ -19,6 +19,7 @@ class Activity_Logger {
     private const string DEVICE_COOKIE_PREFIX = 'wpld_'; // ld: login device
 
     private array $reserved_keys = [];
+    private bool $account_blocked = false;
 
     public function __construct() {
         global $wpdb;
@@ -27,7 +28,8 @@ class Activity_Logger {
         $this->attempts_table = $wpdb->base_prefix . 'login_attempts'; // On multisite, all sites share this table
 
         add_filter('authenticate', [$this, 'reserve_attempt'], 5, 3);
-        add_filter('authenticate', [$this, 'refund_attempt'], PHP_INT_MAX);
+        add_filter('authenticate', [$this, 'refund_attempt'], PHP_INT_MAX - 1); // Before anti-enumeration.php, which writes the generic message
+        add_filter('wp_authenticate_user', fn($user) => $this->account_blocked ? new WP_Error('incorrect_password') : $user); // Skips the password hash check
         add_action('lostpassword_post', [$this, 'throttle_password_reset']);
         add_action('after_password_reset', [$this, 'trust_after_password_reset']);
         add_action('wp_login', [$this, 'log_successful_login'], 10, 2);
@@ -43,10 +45,14 @@ class Activity_Logger {
     }
 
     public function log_failed_login($username): void {
-        $this->create_login_log($username, 'error');
+        if (!$this->account_blocked) {
+            $this->create_login_log($username, 'error');
+        }
     }
 
     public function reserve_attempt($user, $username, $password) {
+        $this->account_blocked = false;
+
         if ((string)$username === '' || (string)$password === '' || $user instanceof WP_User) {
             return $user;
         }
@@ -71,14 +77,15 @@ class Activity_Logger {
             $this->block(self::IP_LOGIN_WINDOW_SECONDS);
         }
 
-        // Per-account limit across all IPs. Counts unknown usernames too. Locks out new devices of the real user while under attack.
+        // Limit failures per account, from any IP. Unknown usernames are counted too.
+        // Over the limit, show the normal "wrong password" error. A "blocked" page would reveal the account's email.
         $account_keys = $accounts
             ? array_map(fn(WP_User $account) => $this->account_key($account->user_login), $accounts)
             : [$this->account_key((string)$username)];
 
         foreach ($account_keys as $account_key) {
             if ($this->hit($account_key, self::ACCOUNT_LOGIN_MAX_ATTEMPTS, self::ACCOUNT_LOGIN_WINDOW_SECONDS) > self::ACCOUNT_LOGIN_MAX_ATTEMPTS) {
-                $this->block(self::ACCOUNT_LOGIN_WINDOW_SECONDS);
+                $this->account_blocked = true;
             }
         }
 
@@ -88,6 +95,11 @@ class Activity_Logger {
     }
 
     public function refund_attempt($user) {
+        // Last word over every other authenticate callback, so no password or app password gets past the block.
+        if ($this->account_blocked) {
+            $user = new WP_Error('incorrect_password');
+        }
+
         if ($this->reserved_keys && $user instanceof WP_User) {
             global $wpdb;
 

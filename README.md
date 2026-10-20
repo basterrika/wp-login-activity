@@ -4,7 +4,8 @@ A small WordPress plugin that does three things:
 
 1. **Records every login attempt** (who, from where, when, and whether it worked).
 2. **Stops password guessing** by blocking anyone who fails too many times.
-3. **Hides account lookup results** in standard WordPress and WooCommerce login and password-reset forms.
+3. **Uses generic account-related errors and confirmations** in standard WordPress and WooCommerce login and
+   password-reset forms.
 
 You can see the records in `Tools > Login activity`.
 
@@ -25,8 +26,9 @@ only fires its login hook for form logins; failed XML-RPC logins are.
 ## How the protection works
 
 Think of it as **counters**. Every login attempt adds `+1`. If the password is correct, that `+1` is
-taken back, so **only failures count**. When a counter goes over its limit, the login page shows *"Login blocked, try
-again later"* (HTTP `429`), even if the password is correct.
+taken back, so **only failures count**. When a counter goes over its limit, the login fails even if the password is
+correct. The per IP and per device counters show *"Login blocked, try again later"* (HTTP `429`). The per account
+counter shows the ordinary "incorrect" error instead, without a distinct block page, HTTP `429` or `Retry-After` header.
 
 There are four counters:
 
@@ -55,7 +57,8 @@ There are four counters:
   for that account (valid 1 year). Logins from that browser only use their own *per device* counter instead of the *per
   IP* and *per account* ones, so neither an attack on your account nor failures from others on your network
   block you there. Changing the password untrusts every device until it logs in again.
-- **On a new device, you are blocked too while someone attacks your account**, even with the right password.
+- **On a new device, you are blocked too while someone attacks your account**, even with the right password, and you
+  see the ordinary "incorrect" error.
   Resetting the password through the "Lost your password?" email clears the account's counter and trusts the browser
   you reset from. To unlock everyone immediately, empty the `{base_prefix}login_attempts` table.
 - Admins sending a password reset from the Users screen are never limited.
@@ -84,9 +87,11 @@ App passwords are 24 random characters, so guessing them isn't realistic.
 
 ## Account enumeration
 
-`anti-enumeration.php` hides whether an account exists on `wp-login.php` and WooCommerce `/my-account/`:
+On standard `wp-login.php` and WooCommerce `/my-account/` forms, the plugin normalizes these account-related responses:
 
 - **Login:** unknown usernames, unknown emails and wrong passwords get the same error.
+- **Per-account login limit:** an exhausted counter gets that same error, even with the correct password. It does not
+  add a distinct block page, HTTP `429` or `Retry-After` header. Per IP and per device limits still return HTTP `429`.
 - **Password reset:** unknown accounts get the same confirmation page as existing ones. No email is sent.
 
 ## The admin screen
