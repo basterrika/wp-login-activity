@@ -9,7 +9,7 @@
  * Text Domain: wp-login-activity
  * Requires PHP: 8.4
  * Tested up to: 6.9.1
- * Requires at least: 6.7
+ * Requires at least: 6.8
  */
 
 defined('ABSPATH') || exit;
