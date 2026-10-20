@@ -5,7 +5,7 @@ defined('ABSPATH') || exit;
 final class Activity_Installer {
 
     /**
-     * Creates both per-site tables for the current blog.
+     * Creates the plugin tables.
      * Returns false if either failed.
      */
     public static function create_tables(): bool {
@@ -33,7 +33,7 @@ final class Activity_Installer {
     private static function create_attempts_table(): bool {
         global $wpdb;
 
-        $table = $wpdb->prefix . 'login_attempts';
+        $table = $wpdb->base_prefix . 'login_attempts';
 
         return $wpdb->query("CREATE TABLE IF NOT EXISTS $table (
             bucket_key CHAR(32) CHARACTER SET ascii COLLATE ascii_bin NOT NULL,

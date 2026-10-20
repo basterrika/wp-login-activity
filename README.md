@@ -56,7 +56,7 @@ There are four counters:
   block you there. Changing the password untrusts every device until it logs in again.
 - **On a new device, you are blocked too while someone attacks your account**, even with the right password.
   Resetting the password through the "Lost your password?" email clears the account's counter and trusts the browser
-  you reset from. To unlock everyone immediately, empty the `{prefix}login_attempts` table.
+  you reset from. To unlock everyone immediately, empty the `{base_prefix}login_attempts` table.
 - Admins sending a password reset from the Users screen are never limited.
 
 **What counts as "one computer or network"**
@@ -98,13 +98,15 @@ App passwords are 24 random characters, so guessing them isn't realistic.
 
 ## Database tables
 
-| Table                    | Holds                                                  |
-|--------------------------|--------------------------------------------------------|
-| `{prefix}login_activity` | The login records shown in the admin screen            |
-| `{prefix}login_attempts` | The counters. Old entries are cleaned up automatically |
+| Table                         | Holds                                                  |
+|-------------------------------|--------------------------------------------------------|
+| `{prefix}login_activity`      | The login records shown in the admin screen            |
+| `{base_prefix}login_attempts` | The counters. Old entries are cleaned up automatically |
 
-**Multisite:** every site has its own pair of tables. Network activation creates them on all sites, and
-new sites get them automatically while the plugin is network-active.
+**Multisite:** every site has its own log table, and all sites share one counters table, because users are shared
+across the network. An account gets 20 failures per hour on the whole network, not on each site, and a password reset
+unlocks it everywhere. Network activation creates the tables, and new sites get their log table automatically while
+the plugin is network-active.
 
 ## Support
 

@@ -24,7 +24,7 @@ class Activity_Logger {
         global $wpdb;
 
         $this->activity_table = $wpdb->prefix . 'login_activity';
-        $this->attempts_table = $wpdb->prefix . 'login_attempts';
+        $this->attempts_table = $wpdb->base_prefix . 'login_attempts'; // On multisite, all sites share this table
 
         add_filter('authenticate', [$this, 'reserve_attempt'], 5, 3);
         add_filter('authenticate', [$this, 'refund_attempt'], PHP_INT_MAX);
