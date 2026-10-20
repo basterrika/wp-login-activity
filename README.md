@@ -121,6 +121,18 @@ across the network. An account gets 20 failures per hour on the whole network, n
 unlocks it everywhere. Network activation creates the tables, and new sites get their log table automatically while
 the plugin is network-active.
 
+## Removal
+
+Deactivation keeps all logs, counters and user preferences.
+
+Deleting a site permanently removes its log table while the plugin is loaded (normally through network activation).
+Other sites' logs and the shared counters remain intact. If the plugin is inactive when a site is deleted, its log
+table is not removed.
+
+**Deleting the plugin through WordPress permanently removes all its login history, shared counters and
+`login_logs_per_page` user preferences.** On multisite, this includes the logs of every existing site. Back up any
+history you want to keep before uninstalling. Removing the plugin files manually does not run cleanup.
+
 ## Support
 
 Open issues or feature requests on [GitHub](https://github.com/basterrika/wp-login-activity).

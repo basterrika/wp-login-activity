@@ -73,3 +73,12 @@ add_action('wp_initialize_site', static function(WP_Site $site): void {
     Activity_Installer::create_tables();
     restore_current_blog();
 });
+
+// In a multisite network, drop the site's log table when the site is deleted.
+add_filter('wpmu_drop_tables', static function(array $tables, int $site_id): array {
+    global $wpdb;
+
+    $tables[] = $wpdb->get_blog_prefix($site_id) . 'login_activity';
+
+    return $tables;
+}, 10, 2);
