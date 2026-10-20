@@ -27,19 +27,20 @@ Think of it as **counters**. Every login attempt adds `+1`. If the password is c
 taken back, so **only failures count**. When a counter goes over its limit, the login page shows *"Login blocked, try
 again later"* (HTTP `429`), even if the password is correct.
 
-There are three counters:
+There are four counters:
 
 | Counter            | Counts attempts from...    | Limit                   | Stops                                |
 |--------------------|----------------------------|-------------------------|--------------------------------------|
 | **Per IP**         | one computer or network    | 10 per 15 minutes       | one attacker guessing from one place |
 | **Per account**    | anywhere, for one username | 20 per hour             | many computers attacking one user    |
+| **Per device**     | one trusted device         | 10 per 15 minutes       | guessing with a stolen device cookie |
 | **Password reset** | one computer or network    | 5 reset emails per hour | flooding the reset form              |
 
 **Examples**
 
 - You mistype your password 10 times. The 11th try is blocked for 15 minutes.
-- 1,000 hacked computers each try once to log in as `admin`. After 20 tries, `admin` is blocked
-  for everyone for an hour.
+- 1.000 hacked computers each try once to log in as `admin`. After 20 tries, `admin` is blocked on every device that
+  hasn't logged in as `admin` before, for an hour.
 - A blocked attacker who keeps trying keeps the block running. The timer restarts on every try.
 - The window starts with the first failure: 10 failures within 15 minutes of it trigger the block. Once
   the window ends with no block, the counter starts again from zero.
@@ -49,8 +50,13 @@ There are three counters:
 - Username and email are the same account: `admin` and `admin@example.com` share one counter.
   Upper/lower case doesn't matter.
 - Usernames that don't exist are counted too, so attackers can't tell real accounts from fake ones.
-- **While someone attacks your account, you are blocked too**, even with the right password. To unlock everyone
-  immediately, empty the `{prefix}login_attempts` table.
+- **Trusted devices keep working during an attack.** After a successful login, the browser gets a signed cookie
+  for that account (valid 1 year). Logins from that browser only use their own *per device* counter instead of the *per
+  IP* and *per account* ones, so neither an attack on your account nor failures from others on your network
+  block you there. Changing the password untrusts every device until it logs in again.
+- **On a new device, you are blocked too while someone attacks your account**, even with the right password.
+  Resetting the password through the "Lost your password?" email clears the account's counter and trusts the browser
+  you reset from. To unlock everyone immediately, empty the `{prefix}login_attempts` table.
 - Admins sending a password reset from the Users screen are never limited.
 
 **What counts as "one computer or network"**

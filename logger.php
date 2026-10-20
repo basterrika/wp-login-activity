@@ -13,6 +13,10 @@ class Activity_Logger {
     private const int IP_RESET_WINDOW_SECONDS = 3600; // 1 hour
     private const int ACCOUNT_LOGIN_MAX_ATTEMPTS = 20;
     private const int ACCOUNT_LOGIN_WINDOW_SECONDS = 3600; // 1 hour
+    private const int DEVICE_LOGIN_MAX_ATTEMPTS = 10;
+    private const int DEVICE_LOGIN_WINDOW_SECONDS = 900; // 15 minutes
+    private const int DEVICE_COOKIE_SECONDS = 31536000; // 1 year
+    private const string DEVICE_COOKIE_PREFIX = 'wpld_'; // ld: login device
 
     private array $reserved_keys = [];
 
@@ -25,12 +29,17 @@ class Activity_Logger {
         add_filter('authenticate', [$this, 'reserve_attempt'], 5, 3);
         add_filter('authenticate', [$this, 'refund_attempt'], PHP_INT_MAX);
         add_action('lostpassword_post', [$this, 'throttle_password_reset']);
-        add_action('wp_login', [$this, 'log_successful_login']);
+        add_action('after_password_reset', [$this, 'trust_after_password_reset']);
+        add_action('wp_login', [$this, 'log_successful_login'], 10, 2);
         add_action('wp_login_failed', [$this, 'log_failed_login']);
     }
 
-    public function log_successful_login($user_login): void {
+    public function log_successful_login($user_login, $user): void {
         $this->create_login_log($user_login, 'success');
+
+        if ($user instanceof WP_User) {
+            $this->issue_device_cookie($user->ID);
+        }
     }
 
     public function log_failed_login($username): void {
@@ -42,20 +51,38 @@ class Activity_Logger {
             return $user;
         }
 
+        $accounts = $this->find_users((string)$username);
+        $device_key = count($accounts) === 1 ? $this->device_key($accounts[0]) : null;
+
+        // A device that logged in to this account before only gets its own limit, so neither an attack on the account nor failures from others on the same IP lock it out.
+        if ($device_key !== null) {
+            if ($this->hit($device_key, self::DEVICE_LOGIN_MAX_ATTEMPTS, self::DEVICE_LOGIN_WINDOW_SECONDS) > self::DEVICE_LOGIN_MAX_ATTEMPTS) {
+                $this->block(self::DEVICE_LOGIN_WINDOW_SECONDS);
+            }
+
+            $this->reserved_keys = [$device_key];
+
+            return $user;
+        }
+
         $ip_key = $this->bucket_key('auth');
 
         if ($ip_key !== null && $this->hit($ip_key, self::IP_LOGIN_MAX_ATTEMPTS, self::IP_LOGIN_WINDOW_SECONDS) > self::IP_LOGIN_MAX_ATTEMPTS) {
             $this->block(self::IP_LOGIN_WINDOW_SECONDS);
         }
 
-        // Per-account limit across all IPs. Counts unknown usernames too. Locks out the real user while under attack.
-        $account_key = $this->account_key((string)$username);
+        // Per-account limit across all IPs. Counts unknown usernames too. Locks out new devices of the real user while under attack.
+        $account_keys = $accounts
+            ? array_map(fn(WP_User $account) => $this->account_key($account->user_login), $accounts)
+            : [$this->account_key((string)$username)];
 
-        if ($this->hit($account_key, self::ACCOUNT_LOGIN_MAX_ATTEMPTS, self::ACCOUNT_LOGIN_WINDOW_SECONDS) > self::ACCOUNT_LOGIN_MAX_ATTEMPTS) {
-            $this->block(self::ACCOUNT_LOGIN_WINDOW_SECONDS);
+        foreach ($account_keys as $account_key) {
+            if ($this->hit($account_key, self::ACCOUNT_LOGIN_MAX_ATTEMPTS, self::ACCOUNT_LOGIN_WINDOW_SECONDS) > self::ACCOUNT_LOGIN_MAX_ATTEMPTS) {
+                $this->block(self::ACCOUNT_LOGIN_WINDOW_SECONDS);
+            }
         }
 
-        $this->reserved_keys = array_filter([$ip_key, $account_key]);
+        $this->reserved_keys = array_filter([$ip_key, ...$account_keys]);
 
         return $user;
     }
@@ -72,6 +99,17 @@ class Activity_Logger {
         $this->reserved_keys = [];
 
         return $user;
+    }
+
+    // Proving the account's email by resetting the password unlocks the account and trusts the resetting browser,
+    // so an ongoing attack can't lock the owner out again before they log in.
+    public function trust_after_password_reset($user): void {
+        global $wpdb;
+
+        if ($user instanceof WP_User) {
+            $wpdb->delete($this->attempts_table, ['bucket_key' => $this->account_key($user->user_login)], ['%s']);
+            $this->issue_device_cookie($user->ID);
+        }
     }
 
     private function block(int $seconds): never {
@@ -155,14 +193,65 @@ class Activity_Logger {
     }
 
     private function account_key(string $username): string {
-        $name = mb_strtolower(trim($username), 'UTF-8');
+        return md5('account|' . mb_strtolower(trim($username), 'UTF-8'));
+    }
 
-        // Email and username of the same account share one bucket.
-        if (is_email($name) && ($account = get_user_by('email', $name))) {
-            $name = mb_strtolower($account->user_login, 'UTF-8');
+    // Email and username of the same account resolve to one user, so they share one bucket.
+    // Usernames can look like emails, so the input can also be one account's username and another's email: core
+    // then checks the password against both, so both count and no device of either is trusted.
+    private function find_users(string $username): array {
+        $name = trim($username);
+        $users = [];
+
+        foreach ([get_user_by('login', $name), is_email($name) ? get_user_by('email', $name) : false] as $user) {
+            if ($user) {
+                $users[$user->ID] = $user;
+            }
         }
 
-        return md5('account|' . $name);
+        return array_values($users);
+    }
+
+    private function device_cookie_name(WP_User $user): string {
+        // Keyed, so the name can't be reversed into the account it belongs to.
+        return self::DEVICE_COOKIE_PREFIX . wp_hash('device_cookie|' . $user->ID);
+    }
+
+    // The password hash is signed in, so changing the password untrusts every device.
+    private function device_signature(WP_User $user, string $nonce, int $expires): string {
+        return wp_hash($user->ID . '|' . $nonce . '|' . $expires . '|' . $user->user_pass, 'auth', 'sha256');
+    }
+
+    private function issue_device_cookie(int $user_id): void {
+        $user = get_userdata($user_id);
+
+        if (!$user || headers_sent()) {
+            return;
+        }
+
+        $nonce = bin2hex(random_bytes(16));
+        $expires = time() + self::DEVICE_COOKIE_SECONDS;
+
+        setcookie($this->device_cookie_name($user), $nonce . '|' . $expires . '|' . $this->device_signature($user, $nonce, $expires), [
+            'expires' => $expires,
+            'path' => COOKIEPATH,
+            'domain' => COOKIE_DOMAIN,
+            'secure' => is_ssl(),
+            'httponly' => true,
+            'samesite' => 'Lax',
+        ]);
+    }
+
+    // Bucket key of this device for the account, or null if the device has no valid cookie for it.
+    private function device_key(WP_User $user): ?string {
+        $cookie = $_COOKIE[$this->device_cookie_name($user)] ?? '';
+        [$nonce, $expires, $signature] = explode('|', is_string($cookie) ? wp_unslash($cookie) : '', 3) + ['', '', ''];
+
+        if ($nonce === '' || (int)$expires < time() || !hash_equals($this->device_signature($user, $nonce, (int)$expires), $signature)) {
+            return null;
+        }
+
+        return md5('device|' . $user->ID . '|' . $nonce);
     }
 
     private function create_login_log($username, $status): void {
