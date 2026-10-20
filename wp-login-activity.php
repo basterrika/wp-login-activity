@@ -8,7 +8,7 @@
  * Update URI: https://github.com/basterrika/wp-login-activity
  * Text Domain: wp-login-activity
  * Requires PHP: 8.4
- * Tested up to: 6.9.1
+ * Tested up to: 7.1.3
  * Requires at least: 6.8
  */
 
