@@ -1,9 +1,10 @@
 # Login Activity
 
-A small WordPress plugin that does two things:
+A small WordPress plugin that does three things:
 
 1. **Records every login attempt** (who, from where, when, and whether it worked).
 2. **Stops password guessing** by blocking anyone who fails too many times.
+3. **Hides account lookup results** in standard WordPress and WooCommerce login and password-reset forms.
 
 You can see the records in `Tools > Login activity`.
 
@@ -49,7 +50,7 @@ There are four counters:
 
 - Username and email are the same account: `admin` and `admin@example.com` share one counter.
   Upper/lower case doesn't matter.
-- Usernames that don't exist are counted too, so attackers can't tell real accounts from fake ones.
+- Usernames that don't exist are counted too. Nonexistent accounts are not exempt from limits.
 - **Trusted devices keep working during an attack.** After a successful login, the browser gets a signed cookie
   for that account (valid 1 year). Logins from that browser only use their own *per device* counter instead of the *per
   IP* and *per account* ones, so neither an attack on your account nor failures from others on your network
@@ -80,6 +81,13 @@ App passwords are 24 random characters, so guessing them isn't realistic.
 > **Behind Cloudflare, a load balancer or another proxy?** The server must pass the visitor's real IP
 > (e.g. nginx `real_ip`). Otherwise every visitor looks like the same IP, and 10 failures from anyone
 > block everyone.
+
+## Account enumeration
+
+`anti-enumeration.php` hides whether an account exists on `wp-login.php` and WooCommerce `/my-account/`:
+
+- **Login:** unknown usernames, unknown emails and wrong passwords get the same error.
+- **Password reset:** unknown accounts get the same confirmation page as existing ones. No email is sent.
 
 ## The admin screen
 
