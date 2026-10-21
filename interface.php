@@ -28,9 +28,8 @@ class Login_Activity_Table extends WP_List_Table {
         $this->filters['s'] = mb_substr($this->filters['s'], 0, 100);
 
         parent::__construct([
-            'singular' => esc_html__('Login Activity', 'wp-login-activity'),
-            'plural' => esc_html__('Login Activity', 'wp-login-activity'),
-            'ajax' => false
+            'singular' => 'loginactivity',
+            'plural' => 'loginactivity'
         ]);
     }
 
