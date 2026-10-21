@@ -278,6 +278,7 @@ class Login_Activity_Table extends WP_List_Table {
 
         ?>
 
+        <input type="hidden" name="status" value="<?php echo esc_attr($this->filters['status']); ?>"/>
         <div class="alignleft actions">
             <?php
 
@@ -322,7 +323,6 @@ class Login_Activity_Table_Screen {
             <?php $this->logs_obj->views() ?>
             <form method="get">
                 <input type="hidden" name="page" value="login-activity"/>
-                <input type="hidden" name="status" value="<?php echo esc_attr(sanitize_key(wp_unslash($_GET['status'] ?? ''))) ?>"/>
                 <?php
                 $this->logs_obj->prepare_items();
                 $this->logs_obj->search_box(esc_html__('Search login', 'wp-login-activity'), 'login-log');
