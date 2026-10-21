@@ -206,10 +206,6 @@ class Login_Activity_Table extends WP_List_Table {
         ];
     }
 
-    public function get_bulk_actions(): array {
-        return [];
-    }
-
     /**
      * Handles data query, filtering, sorting, and pagination.
      */
@@ -276,29 +272,20 @@ class Login_Activity_Table extends WP_List_Table {
         <?php
     }
 
-    protected function display_tablenav($which): void {
+    protected function extra_tablenav($which): void {
+        if ($which !== 'top') {
+            return;
+        }
+
         ?>
 
-        <div class="tablenav <?php echo esc_attr($which); ?>">
-            <div class="alignleft actions">
-                <?php
-
-                if ($which === 'top') {
-                    $this->display_date_dropdown();
-                    submit_button(esc_html__('Filter', 'wp-login-activity'), '', 'filter_action', false, ['id' => 'post-query-submit']);
-                }
-
-                ?>
-            </div>
-
+        <div class="alignleft actions">
             <?php
 
-            $this->extra_tablenav($which);
-            $this->pagination($which);
+            $this->display_date_dropdown();
+            submit_button(esc_html__('Filter', 'wp-login-activity'), '', 'filter_action', false, ['id' => 'post-query-submit']);
 
             ?>
-
-            <br class="clear"/>
         </div>
 
         <?php
