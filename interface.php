@@ -296,16 +296,8 @@ class Login_Activity_Table_Screen {
     public $logs_obj;
 
     public function __construct() {
-        add_filter('set-screen-option', [__CLASS__, 'set_screen'], 10, 3);
+        add_filter('set_screen_option_login_logs_per_page', static fn($status, $option, $value) => absint($value), 10, 3);
         add_action('admin_menu', [$this, 'add_logs_submenu_page']);
-    }
-
-    public static function set_screen($status, $option, $value) {
-        if ($option !== 'login_logs_per_page') {
-            return $status;
-        }
-
-        return absint($value);
     }
 
     public function add_logs_submenu_page(): void {
