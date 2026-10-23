@@ -2,7 +2,7 @@
 /**
  * Plugin Name: Login Activity
  * Description: Monitor user login activities.
- * Version: 1.0.0
+ * Version: 1.1.0
  * Author: Mikel
  * Author URI: https://basterrika.com
  * Update URI: https://github.com/basterrika/wp-login-activity
