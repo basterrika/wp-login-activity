@@ -9,12 +9,19 @@ class Activity_Logger {
 
     private const int IP_LOGIN_MAX_ATTEMPTS = 10;
     private const int IP_LOGIN_WINDOW_SECONDS = 900; // 15 minutes
+
     private const int IP_RESET_MAX_REQUESTS = 5;
     private const int IP_RESET_WINDOW_SECONDS = 3600; // 1 hour
+
+    private const int ACCOUNT_RESET_MAX_REQUESTS = 3;
+    private const int ACCOUNT_RESET_WINDOW_SECONDS = 3600; // 1 hour
+
     private const int ACCOUNT_LOGIN_MAX_ATTEMPTS = 20;
     private const int ACCOUNT_LOGIN_WINDOW_SECONDS = 3600; // 1 hour
+
     private const int DEVICE_LOGIN_MAX_ATTEMPTS = 10;
     private const int DEVICE_LOGIN_WINDOW_SECONDS = 900; // 15 minutes
+
     private const int DEVICE_COOKIE_SECONDS = 31536000; // 1 year
     private const string DEVICE_COOKIE_PREFIX = 'wpld_'; // ld: login device
 
@@ -30,7 +37,7 @@ class Activity_Logger {
         add_filter('authenticate', [$this, 'reserve_attempt'], 5, 3);
         add_filter('authenticate', [$this, 'refund_attempt'], PHP_INT_MAX - 1); // Before anti-enumeration.php, which writes the generic message
         add_filter('wp_authenticate_user', fn($user) => $this->account_blocked ? new WP_Error('incorrect_password') : $user); // Skips the password hash check
-        add_action('lostpassword_post', [$this, 'throttle_password_reset']);
+        add_action('lostpassword_post', [$this, 'throttle_password_reset'], 10, 2);
         add_action('after_password_reset', [$this, 'trust_after_password_reset']);
         add_action('wp_login', [$this, 'log_successful_login'], 10, 2);
         add_action('wp_login_failed', [$this, 'log_failed_login']);
@@ -141,7 +148,7 @@ class Activity_Logger {
         );
     }
 
-    public function throttle_password_reset(WP_Error $errors): void {
+    public function throttle_password_reset(WP_Error $errors, $user_data): void {
         if (current_user_can('edit_users')) {
             return;
         }
@@ -151,9 +158,14 @@ class Activity_Logger {
         if ($key !== null && $this->hit($key, self::IP_RESET_MAX_REQUESTS, self::IP_RESET_WINDOW_SECONDS) > self::IP_RESET_MAX_REQUESTS) {
             $errors->add('too_many_requests', esc_html__('Too many password reset requests. Please try again later.', 'wp-login-activity'));
         }
+        // Per-account cap so resets spread across IPs can't flood one inbox. anti-enumeration.php answers it with the normal confirmation.
+        elseif ($user_data instanceof WP_User && $this->hit(md5('reset_account|' . $user_data->ID), self::ACCOUNT_RESET_MAX_REQUESTS, self::ACCOUNT_RESET_WINDOW_SECONDS, false) > self::ACCOUNT_RESET_MAX_REQUESTS) {
+            $errors->add('reset_account_throttled', esc_html__('Too many password reset requests. Please try again later.', 'wp-login-activity'));
+        }
     }
 
-    private function hit(string $key, int $max, int $window): int {
+    // $extend_when_blocked restarts the window on every blocked hit. Off for buckets an attacker could hold shut against the owner.
+    private function hit(string $key, int $max, int $window, bool $extend_when_blocked = true): int {
         global $wpdb;
 
         $table = $this->attempts_table;
@@ -169,7 +181,7 @@ class Activity_Logger {
             $now + $window,
             $now,
             $max + 1,
-            $max,
+            $extend_when_blocked ? $max : $max + 1, // attempts is capped at $max + 1 so this never matches
             $now + $window
         ));
 

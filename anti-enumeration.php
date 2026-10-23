@@ -11,10 +11,10 @@ add_filter('authenticate', static function($user) {
     return $user;
 }, PHP_INT_MAX);
 
-// Same confirmation page for unknown and existing accounts.
-// Priority 20 runs after the reset throttle, whose error must still show.
+// Same confirmation page for unknown accounts and per-account throttled resets.
+// Priority 20 runs after the reset throttle, whose per-IP error must still show.
 add_action('lostpassword_post', static function(WP_Error $errors, $user_data): void {
-    if ($user_data || array_diff($errors->get_error_codes(), ['invalid_email'])) {
+    if ($user_data ? $errors->get_error_codes() !== ['reset_account_throttled'] : array_diff($errors->get_error_codes(), ['invalid_email'])) {
         return;
     }
 

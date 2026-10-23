@@ -1,10 +1,11 @@
 # Login Activity
 
-A small WordPress plugin that does three things:
+A small WordPress plugin that does four things:
 
 1. **Records every login attempt** (who, from where, when, and whether it worked).
 2. **Stops password guessing** by blocking anyone who fails too many times.
-3. **Uses generic account-related errors and confirmations** in standard WordPress and WooCommerce login and
+3. **Limits password-reset emails**, so nobody can flood an inbox with them.
+4. **Uses generic account-related errors and confirmations** in standard WordPress and WooCommerce login and
    password-reset forms.
 
 You can see the records in `Tools > Login activity`.
@@ -30,7 +31,7 @@ taken back, so **only failures count**. When a counter goes over its limit, the 
 correct. The per IP and per device counters show *"Login blocked, try again later"* (HTTP `429`). The per account
 counter shows the ordinary "incorrect" error instead, without a distinct block page, HTTP `429` or `Retry-After` header.
 
-There are four counters:
+There are five counters:
 
 | Counter            | Counts attempts from...    | Limit                   | Stops                                |
 |--------------------|----------------------------|-------------------------|--------------------------------------|
@@ -38,6 +39,7 @@ There are four counters:
 | **Per account**    | anywhere, for one username | 20 per hour             | many computers attacking one user    |
 | **Per device**     | one trusted device         | 10 per 15 minutes       | guessing with a stolen device cookie |
 | **Password reset** | one computer or network    | 5 reset emails per hour | flooding the reset form              |
+| **Account reset**  | anywhere, for one account  | 3 reset emails per hour | many computers flooding one inbox    |
 
 **Examples**
 
@@ -45,6 +47,8 @@ There are four counters:
 - 1.000 hacked computers each try once to log in as `admin`. After 20 tries, `admin` is blocked on every device that
   hasn't logged in as `admin` before, for an hour.
 - A blocked attacker who keeps trying keeps the block running. The timer restarts on every try.
+  Except the *account reset* counter: its hour runs from the first request, so an attacker can't keep your reset
+  emails blocked.
 - The window starts with the first failure: 10 failures within 15 minutes of it trigger the block. Once
   the window ends with no block, the counter starts again from zero.
 
@@ -92,7 +96,8 @@ On standard `wp-login.php` and WooCommerce `/my-account/` forms, the plugin norm
 - **Login:** unknown usernames, unknown emails and wrong passwords get the same error.
 - **Per-account login limit:** an exhausted counter gets that same error, even with the correct password. It does not
   add a distinct block page, HTTP `429` or `Retry-After` header. Per IP and per device limits still return HTTP `429`.
-- **Password reset:** unknown accounts get the same confirmation page as existing ones. No email is sent.
+- **Password reset:** unknown accounts and accounts over their reset limit get the same confirmation page as a
+  normal reset. No email is sent.
 
 ## The admin screen
 
